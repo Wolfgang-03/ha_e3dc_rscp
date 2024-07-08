@@ -1,0 +1,214 @@
+input_number:
+  s10e_pro_start_charging_percent:
+    name: S10E Pro start charging percent
+    min: 40
+    max: 95
+    step: 1
+    icon: mdi:percent
+    unit_of_measurement: "%"
+    mode: slider
+
+  s10e_pro_stopp_charging_percent:
+    name: S10E Pro stopp Charging percent
+    min: 30
+    max: 90
+    step: 1
+    icon: mdi:percent
+    unit_of_measurement: "%"
+    mode: slider
+
+binary_sensor:
+  - platform: template
+    sensors:
+      s10e_pro_wallbox_1_ready_to_start:
+        unique_id: s10e_pro_wallbox_1_ready_to_start
+        friendly_name: "S10E Pro Wallbox rechts - Startbereit"
+        value_template: >
+          {{states('binary_sensor.s10e_pro_wallbox_1_plug') == 'on' and 
+            states('binary_sensor.s10e_pro_wallbox_1_plug_lock') == 'off' and
+            states('binary_sensor.s10e_pro_wallbox_1_charging') == 'off'}}
+      s10e_pro_wallbox_2_ready_to_start:
+        unique_id: s10e_pro_wallbox_2_ready_to_start
+        friendly_name: "S10E Pro Wallbox links - Startbereit"
+        value_template: >
+          {{states('binary_sensor.s10e_pro_wallbox_2_plug') == 'on' and 
+            states('binary_sensor.s10e_pro_wallbox_2_plug_lock') == 'off' and
+            states('binary_sensor.s10e_pro_wallbox_2_charging') == 'off'}}
+
+      s10e_pro_battery_charging_above_1000:
+        unique_id: s10e_pro_battery_charging_above_1000
+        friendly_name: "S10E Pro Battery Charging above 1000 Watt"
+        value_template: >
+          {{ float(states('sensor.s10e_pro_battery_charge')) > 1.0 }}
+      s10e_pro_battery_charging_above_4000:
+        unique_id: s10e_pro_battery_charging_above_4000
+        friendly_name: "S10E Pro Battery Charging above 4000 Watt"
+        value_template: >
+          {{ float(states('sensor.s10e_pro_battery_charge')) > 4.0 }}
+      s10e_pro_battery_discharging:
+        unique_id: s10e_pro_battery_discharging
+        friendly_name: "S10E Pro Battery is Discharging"
+        value_template: >
+          {{ float(states('sensor.s10e_pro_battery_discharge')) > 0 }}
+      s10e_pro_grid_export_above_1000:
+        unique_id: s10e_pro_grid_export_above_1000
+        friendly_name: "S10E Pro Grid Export above 1000 Watt"
+        value_template: >
+          {{ float(states('sensor.s10e_pro_export_to_grid')) > 1.0 }}
+      s10e_pro_grid_export_above_4000:
+        unique_id: s10e_pro_grid_export_above_4000
+        friendly_name: "S10E Pro Grid Export above 4000 Watt"
+        value_template: >
+          {{ float(states('sensor.s10e_pro_export_to_grid')) > 4.0 }}
+      s10e_pro_battery_soc_above_20:
+        unique_id: s10e_pro_battery_soc_above_20
+        friendly_name: "S10E Pro Battery state of charge above 20 Percent"
+        value_template: >
+          {{ float(states('sensor.s10e_pro_state_of_charge')) > 20.0 }}
+      s10e_pro_battery_soc_above_90:
+        unique_id: s10e_pro_battery_soc_above_90
+        friendly_name: "S10E Pro Battery state of charge above 90 Percent"
+        value_template: >
+          {{ float(states('sensor.s10e_pro_state_of_charge')) > 90.0 }}
+
+script:
+  s10e_pro_wallboxes_check_status:
+    alias: "Wallboxen - Status prüfen"
+    mode: single
+    icon: mdi:script-text-outline
+    sequence:
+      - choose:
+          # Wenn Wallbox 1 lädt, prüfen ob abgeschalten werden muss
+          - conditions:
+              # Wenn an der Wallbox ein Ladevorgang läuft und
+              - condition: state
+                entity_id: binary_sensor.s10e_pro_wallbox_1_charging
+                state: "on"
+              # Wenn Hausspeicher seit mehr als 4 Minuten entladen wird und
+              - condition: state
+                entity_id: binary_sensor.s10e_pro_battery_discharging
+                state: "on"
+                for:
+                  hours: 0
+                  minutes: 4
+                  seconds: 0
+              # Wenn Hausspeicher den Wert "Stopp charging" erreicht hat, dann Ladevorgang beenden
+              - condition: template
+                value_template: >-
+                  {{ float(states('sensor.s10e_pro_state_of_charge')) <=
+                  float(states('input_number.s10e_pro_stopp_charging_percent')) }}
+            sequence:
+              # Ladevorgang beenden
+              - service: button.press
+                metadata: {}
+                data: {}
+                target:
+                  entity_id: button.s10e_pro_wallbox_1_charging
+              # Sonnenmodus einschalten, damit nicht automatisch ein neuer Ladevorgang gestartet wird
+              - service: switch.turn_on
+                metadata: {}
+                data: {}
+                target:
+                  entity_id: switch.s10e_pro_wallbox_1_sun_mode
+              # Benachrichtigung versenden
+              - service: notify.notify_wolfgang
+                metadata: {}
+                data:
+                  title: S10E Pro Wallbox i4 - Laden beendet
+                  message: S10E Pro Wallbox i4 - Laden beendet
+          # Wenn Wallbox 1 startbereit, prüfen ob eingeschalten werden kann
+          - conditions:
+              # Wenn die Startbedingungen an dieser Wallbox erfüllt sind, d.h.
+              #   - Ladekabel ist angeschlossen
+              #   - Ladekabel ist verriegelt
+              #   - Es läuft nicht bereits ein Ladevorgang
+              - condition: state
+                entity_id: binary_sensor.s10e_pro_wallbox_1_ready_to_start
+                state: "on"
+              # und: Der Hausspeicher muss mehr als 50% geladen sein
+              - condition: numeric_state
+                entity_id: sensor.s10e_pro_state_of_charge
+                above: 50
+              # und: Ladeziel vom i4 noch nicht erreicht
+              - alias: "Ladeziel i4 noch nicht erreicht"
+                condition: template
+                value_template: >-
+                  {{ float(states('sensor.i4_m50_ladeziel')) > 
+                  float(states('sensor.i4_m50_verbleibende_batterie_in_prozent')) }}
+              # und: Eine der folgenden Bedingungen muss erfüllt sein
+              - condition: or
+                conditions:
+                  # Wenn mehr als 4000 Watt in die Batterie geladen werden, dann Ladevorgang starten
+                  - condition: state
+                    entity_id: binary_sensor.s10e_pro_battery_charging_above_4000
+                    state: "on"
+                    for:
+                      hours: 0
+                      minutes: 4
+                      seconds: 0
+                  # ODER: Wenn mehr als 1000 Watt ins Netz exportiert werden, dann Ladevorgang starten
+                  - condition: state
+                    entity_id: binary_sensor.s10e_pro_grid_export_above_1000
+                    state: "on"
+                    for:
+                      hours: 0
+                      minutes: 2
+                      seconds: 0
+                  # ODER: Wenn Hausspeicher den Wert "Start Charging" erreicht hat, dann Ladevorgang starten
+                  # und bei "Stopp Charging" wieder abbrechen
+                  - condition: template
+                    value_template: >-
+                      {{ float(states('sensor.s10e_pro_state_of_charge')) >=
+                      float(states('input_number.s10e_pro_start_charging_percent')) }}
+                  # Bei mehr als 95% auf jeden Fall den Ladevorgang starten
+                  - condition: numeric_state
+                    entity_id: sensor.s10e_pro_state_of_charge
+                    above: 95
+            sequence:
+              # Sonnenmodus ausschalten, damit sofort mit dem Laden begonnen wird
+              - service: switch.turn_off
+                metadata: {}
+                data: {}
+                target:
+                  entity_id: switch.s10e_pro_wallbox_1_sun_mode
+              # Ladevorgang starten
+              - service: button.press
+                metadata: {}
+                data: {}
+                target:
+                  entity_id: button.s10e_pro_wallbox_1_charging
+              # Benachrichtigung versenden
+              - service: notify.notify_wolfgang
+                metadata: {}
+                data:
+                  title: S10E Pro Wallbox i4 - Laden gestartet
+                  message: S10E Pro Wallbox i4 - Laden gestartet
+        default:
+          # Prüfen ob die Einstellungen der Wallbox auf "Standard" stehen und wenn nicht auf Standard stellen
+          - if:
+              - condition: template
+                value_template: >-
+                  {{ states('binary_sensor.s10e_pro_wallbox_1_charging') == 'off' }}
+            then:
+              # Wenn Sonnenmodus ausgeschalten, dann einschalten damit nicht mit dem Laden begonnen wird
+              - if:
+                  - condition: state
+                    entity_id: switch.s10e_pro_wallbox_1_sun_mode
+                    state: "off"
+                then:
+                  - service: switch.turn_on
+                    metadata: {}
+                    data: {}
+                    target:
+                      entity_id: switch.s10e_pro_wallbox_1_sun_mode
+              # Wenn "1 Phasen laden" aktiv, dann umschalten auf 3 Phasen
+              - if:
+                  - condition: state
+                    entity_id: sensor.s10e_pro_wallbox_1_phases
+                    state: "1"
+                then:
+                  - service: button.press
+                    metadata: {}
+                    data: {}
+                    target:
+                      entity_id: button.s10e_pro_wallbox_1_phases
