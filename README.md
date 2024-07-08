@@ -3,9 +3,11 @@ Automations for E3DC Wallboxes with Home Assistant
 
 You must add the folowing in your configuration.yaml
 
+```
 homeassistant:
   # load all packages from subdir packages
   packages: !include_dir_named packages
+```
 
 and put the e3dc_automation.yaml in the directory 
 
